@@ -181,6 +181,8 @@ class BertTrainer(Trainer):
         self.total_denominator = 0.0
         self.load_balance_alpha = args.moebert_load_balance
         self.is_moe = args.is_moe
+        self.mbm_weight = getattr(args, "mbm_weight", 0.1)
+        self.sodf_weight = getattr(args, "sodf_weight", 1.0)
 
     def forward_propagation(self, batch, model):
         debug_mode = False
@@ -200,7 +202,7 @@ class BertTrainer(Trainer):
         else:
             loss_mlm, loss_sp, correct_mlm, correct_sp, denominator = loss_info
             gate_loss = 0.0
-        loss = loss_mlm/10 + loss_sp + self.load_balance_alpha * gate_loss
+        loss = self.mbm_weight * loss_mlm + self.sodf_weight * loss_sp + self.load_balance_alpha * gate_loss
         self.total_loss += loss.item()
         self.total_loss_mlm += loss_mlm.item()
         self.total_loss_sp += loss_sp.item()
