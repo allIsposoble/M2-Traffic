@@ -66,6 +66,10 @@ def main():
                         help="The training target of the pretraining model.")
     parser.add_argument("--tie_weights", action="store_true",
                         help="Tie the word embedding and softmax weights.")
+    parser.add_argument("--mbm_weight", type=float, default=0.1,
+                        help="Loss weight for masked burst modeling objective.")
+    parser.add_argument("--sodf_weight", type=float, default=1.0,
+                        help="Loss weight for same-origin-direction-flow objective.")
     parser.add_argument("--has_lmtarget_bias", action="store_true",
                         help="Add bias on output_layer for lm target.")
     
