@@ -28,7 +28,14 @@ def model_opts(parser):
     parser.add_argument("--bidirectional", action="store_true", help="Specific to recurrent model.")
     parser.add_argument("--factorized_embedding_parameterization", action="store_true", help="Factorized embedding parameterization.")
     parser.add_argument("--parameter_sharing", action="store_true", help="Parameter sharing.")
-
+    parser.add_argument("--use_td_encoder", action="store_true",
+                        help="Use Temporal Dynamics encoder before RC-Encoder.")
+    parser.add_argument("--td_kernel_sizes", type=str, default="3,5,7",
+                        help="Kernel sizes for TD-Encoder 1D-CNN, comma separated.")
+    parser.add_argument("--td_dropout", type=float, default=0.1,
+                        help="Dropout used in TD-Encoder.")
+    parser.add_argument("--td_alpha", type=float, default=1.0,
+                        help="Initial learnable scale for TD feature injection.")
 
 def optimization_opts(parser):
     parser.add_argument("--learning_rate", type=float, default=2e-5,
