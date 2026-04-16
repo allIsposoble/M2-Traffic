@@ -13,7 +13,6 @@ import multiprocessing as mp
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 import pandas as pd
-from sklearn.model_selection import train_test_split
 import string
 #scapy.load_layer("tls")
 from scapy.layers.tls.handshake import TLSClientHello,TLSServerHello
@@ -507,6 +506,76 @@ def convert_splitcap(pcapng_path, pcap_path,pcap_split_path,is_pcap_label=False)
         break
     print("all flows: ",sum(all_flows), len(all_flows))
 
+
+
+
+
+def write_dataset_tsv_compatible(df, output_dir, split_name):
+    """Write dataset TSV with optional stats column if present."""
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    output_path = os.path.join(output_dir, f"{split_name}_dataset.tsv")
+    has_stats = "stats" in df.columns
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        if has_stats:
+            f.write("label\ttext_a\tstats\n")
+            for _, row in df.iterrows():
+                f.write(f"{int(row['label'])}\t{row['datagram']}\t{row['stats']}\n")
+        else:
+            f.write("label\ttext_a\n")
+            for _, row in df.iterrows():
+                f.write(f"{int(row['label'])}\t{row['datagram']}\n")
+
+def split_with_class_coverage(data, label_col="label", train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, random_state=41):
+    """
+    Split dataset into train/val/test while trying to preserve class coverage in val/test.
+    Classes with fewer than 3 samples cannot appear in all three splits.
+    """
+    assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-8
+
+    rng = np.random.RandomState(random_state)
+    train_parts, val_parts, test_parts = [], [], []
+
+    for label, group in data.groupby(label_col):
+        n = len(group)
+        indices = group.index.to_numpy().copy()
+        rng.shuffle(indices)
+
+        if n == 1:
+            n_train, n_val, n_test = 1, 0, 0
+        elif n == 2:
+            n_train, n_val, n_test = 1, 0, 1
+        else:
+            n_val = max(1, int(round(n * val_ratio)))
+            n_test = max(1, int(round(n * test_ratio)))
+            n_train = n - n_val - n_test
+            while n_train < 1:
+                if n_val >= n_test and n_val > 1:
+                    n_val -= 1
+                elif n_test > 1:
+                    n_test -= 1
+                else:
+                    break
+                n_train = n - n_val - n_test
+
+        train_idx = indices[:n_train]
+        val_idx = indices[n_train:n_train + n_val]
+        test_idx = indices[n_train + n_val:n_train + n_val + n_test]
+
+        train_parts.append(data.loc[train_idx])
+        if len(val_idx) > 0:
+            val_parts.append(data.loc[val_idx])
+        if len(test_idx) > 0:
+            test_parts.append(data.loc[test_idx])
+
+    data_train = pd.concat(train_parts).sample(frac=1.0, random_state=random_state).reset_index(drop=True)
+    data_val = pd.concat(val_parts).sample(frac=1.0, random_state=random_state + 1).reset_index(drop=True) if val_parts else pd.DataFrame(columns=data.columns)
+    data_test = pd.concat(test_parts).sample(frac=1.0, random_state=random_state + 2).reset_index(drop=True) if test_parts else pd.DataFrame(columns=data.columns)
+
+    return data_train, data_val, data_test
+
 def dataset_extract(dataset_save_path, features):
     
     print("read dataset from json file.")
@@ -532,16 +601,21 @@ def dataset_extract(dataset_save_path, features):
         print("%s\t%d" % (index, dataset_statistic[index]))
     print("all\t%d" % (sum(dataset_statistic)))
      
-	# split train set and test set
-    data_train, data_test = train_test_split(data, test_size=0.2, random_state=41,stratify=data["label"])
-    # split validate set and test set
-    data_val, data_test = train_test_split(data_test, test_size=0.5, random_state=42,stratify=data_test["label"])
+    # split train/val/test with class coverage-aware strategy
+    data_train, data_val, data_test = split_with_class_coverage(
+        data, label_col="label", train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, random_state=41
+    )
 
-    print("label number of train: {}, val: {}, test: {}.".format(len(data_train['label'].value_counts()), len(data_val['label'].value_counts()),len(data_test['label'].value_counts()) ))
+    label_all = set(data['label'].unique())
+    label_train = set(data_train['label'].unique())
+    label_val = set(data_val['label'].unique())
+    label_test = set(data_test['label'].unique())
 
-    data_train = data_train.reset_index(drop=True)
-    data_val = data_val.reset_index(drop=True)
-    data_test = data_test.reset_index(drop=True)
+    print("label number of train: {}, val: {}, test: {}.".format(
+        len(label_train), len(label_val), len(label_test)
+    ))
+    print("missing labels in val:", sorted(label_all - label_val))
+    print("missing labels in test:", sorted(label_all - label_test))
 
     if not os.path.exists(dataset_save_path+"dataset/"):
         os.mkdir(dataset_save_path+"dataset/")
@@ -554,10 +628,10 @@ def dataset_extract(dataset_save_path, features):
     # with open(os.path.join(dataset_save_path + "dataset/", 'valid.pkl'),"wb") as f:
     #     pickle.dump(data_val,f)
 
-    # save bytes to tsv
-    write_dataset_tsv(data_train['datagram'], data_train['label'], dataset_save_path+"dataset/", "train")
-    write_dataset_tsv(data_test['datagram'], data_test['label'], dataset_save_path+"dataset/", "test")
-    write_dataset_tsv(data_val['datagram'], data_val['label'], dataset_save_path+"dataset/", "valid")
+    # save bytes to tsv (supports optional stats column)
+    write_dataset_tsv_compatible(data_train, dataset_save_path+"dataset/", "train")
+    write_dataset_tsv_compatible(data_test, dataset_save_path+"dataset/", "test")
+    write_dataset_tsv_compatible(data_val, dataset_save_path+"dataset/", "valid")
     print("finish generating pre-train's datagram dataset.\nPlease check in %s" % dataset_save_path+"dataset/")
 
 def enhance_based_tsv(path,filename,new_file_prefix,enhance_factor=1):
